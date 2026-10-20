@@ -1452,7 +1452,7 @@ function ClimbGame(){
   let t = 0, left = 60, camY = 0, genY, mainX, rowsMade = 0, topM = 0;
   let plats = [], vines = [], foes = [], items = [], arrows = [], seeds = [];
   let hearts = 3, inv = 0, hurtT = 0;
-  const p = { x: 128, y: 120, vy: 0, vx: 0, face: 1, ground: null, climb: null, anim: 0, drop: 0, jumpHeld: false, shootT: 0 };
+  const p = { x: 128, y: 120, vy: 0, vx: 0, face: 1, ground: null, climb: null, anim: 0, drop: 0, jumpHeld: false, shootT: 0, air2: true, flipT: 0 };
 
   // ----- level generation (rows of one-way platforms; the screen wraps left/right) -----
   plats.push({ x: 0, w: W, y: 136, floor: true, dx: 0 });
@@ -1523,7 +1523,7 @@ function ClimbGame(){
     if (arrows.length >= 3 || p.shootT > 0) return;
     const up = held('up') && !p.climb;
     arrows.push(up ? { x: p.x, y: p.y - 14, vx: 0, vy: -230, life: .55, up: true } : { x: p.x + p.face * 5, y: p.y - 7, vx: p.face * 230, vy: 0, life: .5 });
-    p.shootT = .18; tone(1200, .06, 'square', .03, -600);
+    p.shootT = .28; tone(1200, .06, 'square', .03, -600);
   }
   function killFoe(f){
     f.dead = true;
@@ -1535,12 +1535,15 @@ function ClimbGame(){
 
   const api = {
     title: 'SKY CLIMB',
-    how: '◀ ▶ run &nbsp; A jump (hold = higher) &nbsp; B shoot &nbsp; ▲+B shoot up<br>▲ ▼ climb vines &nbsp; ▼+A drop through a ledge<br>Climb as high as you can in 60 seconds — 3 hearts!',
+    how: '◀ ▶ run &nbsp; A jump, A again in the air = double jump<br>B shoot (hold to keep firing) &nbsp; hold ▲ + B shoot up<br>▲ ▼ climb vines &nbsp; ▼+A drop through a ledge<br>Climb as high as you can in 60 seconds — 3 hearts!',
     labels: ['JUMP', 'SHOOT'],
     status: () => 'TIME ' + fmt(left) + '  ' + height() + 'm',
     update(dt){
       t += dt; left -= dt; inv = Math.max(0, inv - dt); hurtT = Math.max(0, hurtT - dt); p.shootT -= dt; p.drop = Math.max(0, p.drop - dt);
       if (left <= 0) { api.done = true; return; }
+      if (btn.b && p.shootT <= 0) shoot();
+      p.flipT = Math.max(0, p.flipT - dt);
+      if (p.ground || p.climb) p.air2 = true;
 
       // moving platforms (carry whatever stands on them)
       for (const q of plats) if (q.mv) { const nx = q.mv.x0 + Math.sin(t * q.mv.sp + q.mv.ph) * q.mv.a; q.dx = nx - q.x; q.x = nx; }
@@ -1561,7 +1564,7 @@ function ClimbGame(){
         }
         if (p.ground && mv) p.anim += dt * 10;
         // grab a vine
-        const v = up ? vines.find(v => Math.abs(dxWrap(p.x, v.x)) < 5 && p.y > v.top + 1 && p.y <= v.bot + 1)
+        const v = up && !btn.b ? vines.find(v => Math.abs(dxWrap(p.x, v.x)) < 5 && p.y > v.top + 1 && p.y <= v.bot + 1)
           : dn && p.ground ? vines.find(v => Math.abs(dxWrap(p.x, v.x)) < 5 && Math.abs(p.y - v.top) < 2) : null;
         if (v) { p.climb = v; p.ground = null; p.x = v.x; }
       }
@@ -1710,7 +1713,9 @@ function ClimbGame(){
         if (p.climb) img = (Math.floor(p.anim) % 2) ? SP.climb.l : SP.climb.r;
         else { const s = !p.ground ? SP.walk1 : (p.vx && Math.floor(p.anim) % 2 ? SP.walk1 : p.vx ? SP.walk2 : SP.stand); img = p.face < 0 ? s.l : s.r; }
         both(Math.round(p.x - 4), 8, x => {
-          ctx.drawImage(img, x, sy(p.y) - 12);
+          if (p.flipT > 0) {
+            ctx.save(); ctx.translate(x + 4, sy(p.y) - 6); ctx.rotate(-p.face * (1 - p.flipT / .3) * Math.PI * 2); ctx.drawImage(img, -4, -6); ctx.restore();
+          } else ctx.drawImage(img, x, sy(p.y) - 12);
           if (!p.climb && p.shootT > 0) { ctx.fillStyle = '#a05010'; ctx.fillRect(p.face > 0 ? x + 8 : x - 2, sy(p.y) - 10, 2, 6); }
         });
       }
@@ -1724,7 +1729,12 @@ function ClimbGame(){
     },
     pressA(){
       if (p.climb) { p.climb = null; p.vy = -JUMP_V * .8; p.jumpHeld = true; tone(300, .1, 'square', .04, 300); return; }
-      if (!p.ground) return;
+      if (!p.ground) {
+        if (!p.air2) return;                                               // double jump: one more hop in mid-air
+        p.air2 = false; p.vy = -JUMP_V * .85; p.jumpHeld = true; p.flipT = .3;
+        burst(p.x, p.y - camY, 6, ['#fcfcfc', '#9cd8fc'], 30, 0, .3);
+        tone(450, .1, 'square', .04, 400); return;
+      }
       if (held('down') && !p.ground.floor) { p.ground = null; p.drop = .22; p.vy = 20; return; }
       p.ground = null; p.vy = -JUMP_V; p.jumpHeld = true; tone(300, .1, 'square', .04, 300);
     },
