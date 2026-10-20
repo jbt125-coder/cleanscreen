@@ -1426,7 +1426,7 @@ function BugsGame(){
 }
 
 /* =====================================================================
-   GAME 5: SKY CLIMB — climb a random tower for 60 seconds, shoot critters
+   GAME 5: SKY CLIMB — climb a random tower until your hearts run out, shoot critters
    ===================================================================== */
 const CL_SP = (() => {
   const P = { k: '#101010', g: '#58b830', G: '#a8e070', s: '#c87830', S: '#f8b060', w: '#fcfcfc', r: '#d82800', p: '#a040e0', P: '#e080f8',
@@ -1448,8 +1448,8 @@ const CL_SP = (() => {
 
 function ClimbGame(){
   const GRAV = 520, JUMP_V = 215, RUN = 72, CLIMB = 52, PW = 3;      // PW = half width of the player
-  const diff = 1 + (level - 1) * .2;
-  let t = 0, left = 60, camY = 0, genY, mainX, rowsMade = 0, topM = 0;
+  const diff0 = 1 + (level - 1) * .2;
+  let diff = diff0, t = 0, camY = 0, genY, mainX, rowsMade = 0, topM = 0;
   let plats = [], vines = [], foes = [], items = [], arrows = [], seeds = [];
   let hearts = 3, inv = 0, hurtT = 0;
   const p = { x: 128, y: 120, vy: 0, vx: 0, face: 1, ground: null, climb: null, anim: 0, drop: 0, jumpHeld: false, shootT: 0, air2: true, flipT: 0 };
@@ -1462,6 +1462,7 @@ function ClimbGame(){
     const gap = big ? rand(46, 56) : rand(24, 32);
     const y = Math.round(genY - gap), prevMain = mainX;
     rowsMade++;
+    diff = diff0 * (1 + Math.min(1, rowsMade / 150) * .7);          // endless: critters get busier the higher you go
     const mw = rand(30, 56);
     mainX = clamp(prevMain + (big ? rand(-10, 10) : rand(-60, 60)), mw / 2 + 2, W - mw / 2 - 2);
     const main = { x: Math.round(mainX - mw / 2), w: Math.round(mw), y, dx: 0 };
@@ -1535,12 +1536,11 @@ function ClimbGame(){
 
   const api = {
     title: 'SKY CLIMB',
-    how: '◀ ▶ run &nbsp; A jump, A again in the air = double jump<br>B shoot (hold to keep firing) &nbsp; hold ▲ + B shoot up<br>▲ ▼ climb vines &nbsp; ▼+A drop through a ledge<br>Climb as high as you can in 60 seconds — 3 hearts!',
+    how: '◀ ▶ run &nbsp; A jump, A again in the air = double jump<br>B shoot (hold to keep firing) &nbsp; hold ▲ + B shoot up<br>▲ ▼ climb vines &nbsp; ▼+A drop through a ledge<br>Climb as high as you can — keep going until your 3 hearts run out!',
     labels: ['JUMP', 'SHOOT'],
-    status: () => 'TIME ' + fmt(left) + '  ' + height() + 'm',
+    status: () => 'HEIGHT ' + topM + 'm',
     update(dt){
-      t += dt; left -= dt; inv = Math.max(0, inv - dt); hurtT = Math.max(0, hurtT - dt); p.shootT -= dt; p.drop = Math.max(0, p.drop - dt);
-      if (left <= 0) { api.done = true; return; }
+      t += dt; inv = Math.max(0, inv - dt); hurtT = Math.max(0, hurtT - dt); p.shootT -= dt; p.drop = Math.max(0, p.drop - dt);
       if (btn.b && p.shootT <= 0) shoot();
       p.flipT = Math.max(0, p.flipT - dt);
       if (p.ground || p.climb) p.air2 = true;
@@ -1725,7 +1725,6 @@ function ClimbGame(){
         ctx.drawImage(CL_SP.heart, 4 + i * 9, 13);
       }
       ctx.globalAlpha = 1;
-      if (left < 10 && Math.floor(t * 2) % 2) txt(Math.ceil(left) + '', W / 2, 24, '#fcfc78', 16);
     },
     pressA(){
       if (p.climb) { p.climb = null; p.vy = -JUMP_V * .8; p.jumpHeld = true; tone(300, .1, 'square', .04, 300); return; }
