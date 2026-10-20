@@ -779,41 +779,105 @@ function BoogerGame(){
 /* =====================================================================
    GAME 3: TREE HOOPS — make 10 baskets on a swaying tree hoop
    ===================================================================== */
+function makeSpriteP(rows, pal){
+  const c = document.createElement('canvas'); c.width = Math.max(...rows.map(r => r.length)); c.height = rows.length;
+  const x = c.getContext('2d');
+  rows.forEach((row, j) => [...row].forEach((ch, i) => { if (ch !== '.' && pal[ch]) { x.fillStyle = pal[ch]; x.fillRect(i, j, 1, 1); } }));
+  return c;
+}
+const HOOP_BIRDS = (() => {
+  const UP = ["....WW....HH..", "....WWW..HHEKK", "..BBBWWBBHHH..", ".BBBBBBBBBB...", "TTBBBBBBBB....", "T...BBBBB....."];
+  const DN = ["..........HH..", ".........HHEKK", "..BBBBBBBHHH..", ".BBBBBBBBBB...", "TTBBWWWWBB....", "T...WWWWB.....", ".....WW......."];
+  const kinds = [
+    { name: 'FLAMINGO', B: '#f890b8', W: '#f86890', H: '#f890b8', K: '#202020', T: '#f86890', legs: true },
+    { name: 'PARROT',   B: '#30c030', W: '#2060e0', H: '#e83020', K: '#f8d878', T: '#2060e0' },
+    { name: 'CANARY',   B: '#f8e030', W: '#d8b818', H: '#f8e030', K: '#f89030', T: '#d8b818' },
+    { name: 'ORIOLE',   B: '#f88818', W: '#202020', H: '#202020', K: '#a0a0a0', T: '#202020' },
+    { name: 'BLUE JAY', B: '#4888f0', W: '#2050c0', H: '#4888f0', K: '#202020', T: '#2050c0', crest: true },
+    { name: 'CARDINAL', B: '#e02818', W: '#a01810', H: '#e02818', K: '#f8a030', T: '#a01810', crest: true }
+  ];
+  return kinds.map(k => {
+    const pal = { B: k.B, W: k.W, H: k.H, K: k.K, T: k.T, E: '#000000', L: k.W };
+    const dress = rows => {
+      rows = rows.slice();
+      if (k.crest) rows.unshift("...........H..");
+      if (k.legs) for (let i = 0; i < 4; i++) rows.push(".....L.L......");
+      return rows;
+    };
+    const a = makeSpriteP(dress(UP), pal), b = makeSpriteP(dress(DN), pal);
+    return { name: k.name, col: k.B, fr: [{ r: a, l: flip(a) }, { r: b, l: flip(b) }] };
+  });
+})();
+
 function HoopsGame(){
   const GR = 134, BR = 4, G = 230, NEED = 10, ANG = 60 * Math.PI / 180;
   const RIM_Y = 62, RIM_L = 202, RIM_R = 221, BOARD_X = 222, BOARD_T = 42, BOARD_B = 68, TRUNK_X = 226;
+  const JUMP_V = 165, MAN_G = 420, TOO_CLOSE = 140;
   const amp = Math.min(8, 2 + level * 1.5);
-  let t = 0, made = 0, sway = 0, netT = 0, meter = null, rimSnd = 0;
-  const man = { x: 40, face: 1, anim: 0, moving: false, ball: null, dp: 0 };
-  const balls = BALL_STYLES.map((s, i) => ({ img: s.img, x: 40 + i * 30, y: GR - BR, vx: 0, vy: 0, rot: 0, free: true, live: false }));
+  let t = 0, made = 0, sway = 0, netT = 0, meter = null, rimSnd = 0, birdT = rand(4, 7), birds = [];
+  const man = { x: 40, jy: 0, vy: 0, face: 1, anim: 0, moving: false, ball: null, dp: 0 };
+  const balls = BALL_STYLES.map((s, i) => ({ img: s.img, x: 40 + i * 30, y: GR - BR, vx: 0, vy: 0, rot: 0, free: true, live: false, noPick: 0 }));
   man.ball = balls[0]; balls[0].free = false;
   const swayAt = y => sway * clamp((GR - y) / (GR - RIM_Y), 0, 1.8);
+  const air = () => man.jy > 0 || man.vy < 0;
+  const handY = () => GR - 17 - man.jy;
 
   function shoot(){
     const b = man.ball, v = 165 + meter.p * 105;
-    b.free = true; b.live = true; b.scored = false; b.from = man.x; b.ret = false;
-    b.x = man.x + 3; b.y = GR - 17;
+    b.free = true; b.live = true; b.scored = false; b.from = man.x; b.jump = air(); b.ret = false; b.noPick = .6;
+    b.x = man.x + 3; b.y = handY();
     b.vx = v * Math.cos(ANG); b.vy = -v * Math.sin(ANG);
     man.ball = null; meter = null; sfx.dribble();
   }
-  function tryPickup(range){
-    if (man.ball) return;
-    for (const b of balls) if (b.free && Math.abs(b.x - man.x) < range && b.y > GR - 18) {
-      man.ball = b; b.free = false; b.live = false; sfx.dribble(); return;
+  function loose(range){
+    let best = null, bd = 1e9;
+    for (const b of balls) {
+      if (!b.free || b.live || b.noPick > 0 || b.y < GR - 18) continue;
+      const d = Math.abs(b.x - man.x);
+      if (d < range && d < bd) { bd = d; best = b; }
     }
+    return best;
   }
+  function grab(b){
+    if (man.ball) { const m = man.ball; m.free = true; m.live = false; m.noPick = .5; m.x = man.x - man.face * 7; m.y = GR - BR; m.vx = -man.face * 20; m.vy = 0; }
+    man.ball = b; b.free = false; b.live = false; meter = null; sfx.dribble();
+  }
+  function tryPickup(range){ if (man.ball || air()) return; const b = loose(range); if (b) grab(b); }
+
+  function spawnBird(){
+    const k = pick(HOOP_BIRDS), dir = Math.random() < .5 ? 1 : -1;
+    birds.push({ k, dir, x: dir > 0 ? -14 : W + 14, y0: rand(30, 84), y: 0, sp: rand(32, 52) * (1 + (level - 1) * .15), f: rand(0, 2), bob: rand(0, 6.28), hit: 0 });
+    sfx.tweet();
+  }
+  function birdBonk(b, bd){
+    const cx = bd.x, cy = bd.y + 3, dx = b.x - cx, dy = b.y - cy, d = Math.hypot(dx, dy);
+    if (d > 8 || d === 0 || bd.hit > 0) return;
+    const nx = dx / d, ny = dy / d, vn = b.vx * nx + b.vy * ny;
+    if (vn < 0) { b.vx -= 1.7 * vn * nx; b.vy -= 1.7 * vn * ny; }
+    b.x = cx + nx * 8.5; b.y = cy + ny * 8.5;
+    bd.hit = .5; bd.sp *= 1.4;
+    burst(cx, cy, 10, [bd.k.col, '#fcfcfc'], 45, 40, .8);
+    popups.push({ x: cx, y: cy - 8, text: pick(['SQUAWK!', 'BLOCKED!', 'TWEET!']), life: .9, col: '#fcfcfc' });
+    tone(1500, .08, 'square', .04, -700); tone(1100, .08, 'square', .04, 500, .07);
+  }
+
   function stepBall(b, h){
     const py = b.y;
     b.vy += G * h; b.x += b.vx * h; b.y += b.vy * h; b.rot += b.vx * h / BR;
     const rl = RIM_L + sway, rr = RIM_R + sway;
     if (b.live && !b.scored && py < RIM_Y && b.y >= RIM_Y && b.x > rl && b.x < rr) {
       b.scored = true; b.ret = true; b.vx *= .3; netT = .5; made++;
-      const long = b.from < 80;
-      addScore(100, 200, 50, long ? 'LONG SHOT!' : pick(['SWISH!', 'BUCKET!', 'NOTHIN NET!']));
+      const long = b.from < 80, bits = [];
+      if (b.jump) bits.push('JUMP SHOT!');
+      if (long) bits.push('LONG SHOT!');
+      addScore(100, 200, 50, bits[0] || pick(['SWISH!', 'BUCKET!', 'NOTHIN NET!']));
+      if (b.jump) addScore(50);
       if (long) addScore(50);
+      if (bits.length > 1) popups.push({ x: 200, y: 30, text: bits[1], life: 1, col: '#fcfcfc' });
       sfx.swish();
       if (made >= NEED) api.done = true;
     }
+    if (b.live) for (const bd of birds) birdBonk(b, bd);
     for (const px of [rl, rr]) {
       const dx = b.x - px, dy = b.y - RIM_Y, d = Math.hypot(dx, dy);
       if (d < BR + 1 && d > 0) {
@@ -839,31 +903,50 @@ function HoopsGame(){
 
   const api = {
     title: 'TREE HOOPS',
-    how: '◀ ▶ dribble &nbsp; hold A, let go to shoot<br>Missed? Run and grab a ball &nbsp; B swap balls<br>Make 10 baskets — the tree sways!',
-    labels: ['SHOOT', 'SWAP'],
+    how: '◀ ▶ dribble &nbsp; hold A, let go to shoot<br>B jump — shoot in the air for +50! &nbsp; ▼ grab a different ball<br>Make 10 baskets — watch out for birds!',
+    labels: ['SHOOT', 'JUMP'],
     status: () => 'BASKETS ' + made + '/' + NEED,
     update(dt){
       t += dt; netT = Math.max(0, netT - dt); rimSnd -= dt;
       sway = Math.sin(t * 1.3) * amp + Math.sin(t * 2.9) * amp * .25;
       man.moving = false;
-      if (!meter) {
-        const mv = held('left') ? -1 : held('right') ? 1 : 0;
-        if (mv) { man.face = mv; man.x = clamp(man.x + mv * 62 * dt, 6, 218); man.anim += dt * 10; man.moving = true; }
-      } else {
-        meter.p += meter.dir * dt / 1.4;
+      const mv = held('left') ? -1 : held('right') ? 1 : 0;
+      if (mv && (!meter || air())) {
+        man.face = mv; man.x = clamp(man.x + mv * (air() ? 50 : 62) * dt, 6, 218);
+        if (!air()) { man.anim += dt * 10; man.moving = true; }
+      }
+      if (air()) {
+        man.vy += MAN_G * dt; man.jy -= man.vy * dt;
+        if (man.jy <= 0) { man.jy = 0; man.vy = 0; sfx.dribble(); }
+      }
+      if (meter) {
+        meter.p += meter.dir * dt / (air() ? .55 : 1.4);
         if (meter.p >= 1) { meter.p = 1; meter.dir = -1; } else if (meter.p <= 0) { meter.p = 0; meter.dir = 1; }
       }
       if (man.ball) {
         const b = man.ball, before = Math.floor(man.dp / Math.PI);
         man.dp += dt * (man.moving ? 9 : 6);
-        if (meter) { b.x = man.x + 3; b.y = GR - 17; }
+        if (meter || air()) { b.x = man.x + 3; b.y = handY(); }
         else {
           if (Math.floor(man.dp / Math.PI) !== before) sfx.dribble();
           b.x = man.x + man.face * 6; b.y = GR - BR - Math.abs(Math.sin(man.dp)) * 8;
           b.rot += dt * man.face * 4;
         }
       } else tryPickup(8);
-      for (const b of balls) if (b.free) for (let s = 0; s < 3; s++) stepBall(b, dt / 3);
+      if (held('down') && man.ball && !meter && !air()) { const b = loose(16); if (b) grab(b); }
+
+      birdT -= dt;
+      if (birdT <= 0) { spawnBird(); birdT = rand(8, 12); }
+      for (const bd of birds) {
+        bd.x += bd.dir * bd.sp * dt; bd.f += dt * (bd.hit > 0 ? 16 : 7); bd.bob += dt * 3;
+        bd.y = bd.y0 + Math.sin(bd.bob) * 4 - (bd.hit > 0 ? 10 * dt : 0); bd.hit = Math.max(0, bd.hit - dt);
+      }
+      birds = birds.filter(bd => bd.x > -20 && bd.x < W + 20);
+
+      for (const b of balls) {
+        b.noPick = Math.max(0, b.noPick - dt);
+        if (b.free) for (let s = 0; s < 3; s++) stepBall(b, dt / 3);
+      }
     },
     draw(){
       // court floor
@@ -898,13 +981,19 @@ function HoopsGame(){
       ctx.stroke();
       ctx.fillStyle = '#000'; ctx.fillRect(Math.round(rl) - 1, RIM_Y - 1, Math.round(rr - rl) + 3, 4);
       ctx.fillStyle = '#f83800'; ctx.fillRect(Math.round(rl), RIM_Y, Math.round(rr - rl) + 1, 2);
-      // man
-      const ox = Math.round(man.x - 4), oy = GR - 12;
-      const sp = man.moving ? (Math.floor(man.anim) % 2 ? SP.walk1 : SP.walk2) : SP.stand;
+      // birds
+      for (const bd of birds) {
+        const fr = bd.k.fr[Math.floor(bd.f) % 2], img = bd.dir > 0 ? fr.r : fr.l;
+        ctx.drawImage(img, Math.round(bd.x - 7), Math.round(bd.y - (img.height > 8 ? 1 : 0)));
+      }
+      // man (with shadow while jumping)
+      const ox = Math.round(man.x - 4), oy = Math.round(GR - 12 - man.jy);
+      if (man.jy > 0) { ctx.fillStyle = 'rgba(0,0,0,.4)'; ctx.fillRect(ox, GR - 1, 8, 1); }
+      const sp = man.moving ? (Math.floor(man.anim) % 2 ? SP.walk1 : SP.walk2) : air() ? SP.walk1 : SP.stand;
       ctx.drawImage(man.face < 0 ? sp.l : sp.r, ox, oy);
+      if (meter || (air() && man.ball)) { ctx.fillStyle = PAL.s; ctx.fillRect(ox + 1, oy - 4, 1, 6); ctx.fillRect(ox + 6, oy - 4, 1, 6); }
       if (meter) {
-        ctx.fillStyle = PAL.s; ctx.fillRect(ox + 1, oy - 4, 1, 6); ctx.fillRect(ox + 6, oy - 4, 1, 6);
-        const mx = ox - 7, my = GR - 30;
+        const mx = ox - 7, my = oy - 18;
         ctx.fillStyle = '#000'; ctx.fillRect(mx - 1, my - 1, 5, 22);
         ctx.fillStyle = '#404040'; ctx.fillRect(mx, my, 3, 20);
         const hgt = Math.round(meter.p * 20);
@@ -917,20 +1006,17 @@ function HoopsGame(){
         ctx.rotate(Math.round(b.rot / (Math.PI / 2)) * Math.PI / 2);
         ctx.drawImage(b.img, -4, -4); ctx.restore();
       }
-      if (state === 'play' && man.ball && !meter && man.x > 140 && Math.floor(t * 3) % 2 === 0) txt('BACK UP!', man.x - 20, GR - 26, '#fcfc78');
+      if (state === 'play' && man.ball && !meter && man.x > TOO_CLOSE && Math.floor(t * 3) % 2 === 0) txt('BACK UP!', man.x - 20, GR - 26, '#fcfc78');
     },
     pressA(){
       if (!man.ball) return tryPickup(14);
-      if (man.x > 140) { popups.push({ x: man.x - 10, y: GR - 30, text: 'TOO CLOSE', life: .8, col: '#fcfcfc' }); return; }
+      if (man.x > TOO_CLOSE) { popups.push({ x: man.x - 10, y: GR - 30, text: 'TOO CLOSE', life: .8, col: '#fcfcfc' }); return; }
       meter = { p: 0, dir: 1 }; man.face = 1;
     },
     releaseA(){ if (meter) shoot(); },
     pressB(){
-      if (meter) return;
-      const other = balls.find(b => b.free && Math.abs(b.x - man.x) < 16 && b.y > GR - 18);
-      if (!other) return;
-      if (man.ball) { const m = man.ball; m.free = true; m.live = false; m.x = man.x - man.face * 6; m.y = GR - BR; m.vx = m.vy = 0; }
-      man.ball = other; other.free = false; sfx.dribble();
+      if (air()) return;
+      man.vy = -JUMP_V; man.jy = .01; tone(300, .1, 'square', .04, 300);
     },
     cleanup(){}
   };
