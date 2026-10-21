@@ -1065,12 +1065,12 @@ function BugsGame(){
   const DIVES = ['swoop', 'zigzag', 'loop', 'dash', 'spiral'];
   const SHOTS = ['single', 'double', 'aimed', 'spread', 'bomb'];
   const BOSS_ATTACKS = ['spread', 'laser', 'homing', 'rain', 'spawn'];
-  let t = 0, phase, wave, waveKills, banner, bannerT, lives = 3, totalKills, inv = 0, deadT = 0;
+  let freeLives = 0, t = 0, phase, wave, waveKills, banner, bannerT, lives = 3, totalKills, inv = 0, deadT = 0;
   let spawnT, fireT = 0, shots, ebul, bugs, tears, boss, bonus = null, results = null;
   const ship = { x: 128 };
 
   function restart(){
-    wave = 0; cycle = 0; totalKills = 0; lives = 3; shots = []; ebul = []; bugs = []; tears = []; boss = null;
+    wave = 0; cycle = 0; totalKills = 0; freeLives = 0; lives = 3; shots = []; ebul = []; bugs = []; tears = []; boss = null;
     startWave();
   }
   function startWave(){
@@ -1141,8 +1141,8 @@ function BugsGame(){
   }
   function countKill(){
     totalKills++;
-    if (totalKills % 15 === 0 && lives < 5) {
-      lives++; popups.push({ x: ship.x, y: SHIP_Y - 14, text: '1UP!', life: 1.2, col: '#58f858' });
+    if (totalKills % 15 === 0 && freeLives < 3) {
+      lives++; freeLives++; popups.push({ x: ship.x, y: SHIP_Y - 14, text: '1UP!', life: 1.2, col: '#58f858' });
       [784, 988, 1175, 1568].forEach((f, i) => tone(f, .1, 'square', .05, 0, i * .07));
     }
   }
@@ -1166,7 +1166,65 @@ function BugsGame(){
   function makeBoss(){
     const look = makeBugLook(Math.floor(Math.random() * 5)), hp = 20 + (level - 1) * 5;
     boss = { look, white: look.fr.map(silhouette), x: 128, y: -40, t: 0, hp, max: hp, flash: 0, f: 0,
-      atk: pick(BOSS_ATTACKS), atkT: 2.5, laser: null, s: 3 };
+      atk: pick(BOSS_ATTACKS), atkT: 2.5, laser: null, s: 3, mode: 'enter', mt: 0 };
+  }
+  const ease = u => u < .5 ? 2 * u * u : 1 - 2 * (1 - u) * (1 - u);
+  function bossNext(b){
+    b.mt = 0; b.sx = b.x; b.sy = b.y;
+    const r = Math.random(), dive = .18 + Math.min(.12, cycle * .04);
+    if (r < dive) {                                                       // full dive: wind up, plunge off the bottom, come back from the top
+      b.mode = 'wind'; b.D = .55;
+    } else if (r < dive + .27) {                                          // fake dive: lunge at you, then pull back up
+      b.mode = 'fake'; b.D = rand(1.1, 1.6) / Math.min(1.5, sf);
+      b.tx = clamp(ship.x + rand(-30, 30), 24, W - 24); b.ty = rand(84, 100);
+      tone(700, .25, 'triangle', .03, -400);
+    } else {                                                              // roam to a random spot, sometimes fast, sometimes slow
+      b.mode = 'roam'; b.D = rand(.7, 1.9) / Math.min(1.5, sf);
+      b.tx = rand(28, W - 28); b.ty = rand(44, 68); b.wig = Math.random() < .4 ? rand(6, 16) : 0;
+    }
+  }
+  function moveBoss(b, dt){
+    b.mt += dt;
+    const u = Math.min(1, b.mt / (b.D || 1));
+    switch (b.mode) {
+      case 'enter':
+        b.y += 35 * dt; if (b.y >= 52) { b.y = 52; b.mode = 'hold'; b.D = .6; b.mt = 0; }
+        break;
+      case 'hold':                                                        // short pause between moves
+        if (u >= 1) bossNext(b);
+        break;
+      case 'roam': {
+        const e = ease(u);
+        b.x = b.sx + (b.tx - b.sx) * e + Math.sin(u * Math.PI * 3) * (b.wig || 0);
+        b.y = b.sy + (b.ty - b.sy) * e;
+        if (u >= 1) { b.mode = 'hold'; b.D = rand(.15, .9); b.mt = 0; }
+        break;
+      }
+      case 'fake': {
+        const k = Math.sin(u * Math.PI), e = u < .5 ? ease(u * 2) : 1;
+        b.x = b.sx + (b.tx - b.sx) * e * (u < .5 ? 1 : 1 - ease((u - .5) * 2) * .6);
+        b.y = b.sy + (b.ty - b.sy) * k;
+        if (u >= 1) { b.mode = 'hold'; b.D = rand(.2, .6); b.mt = 0; }
+        break;
+      }
+      case 'wind':                                                        // shake in place as a warning
+        b.x = b.sx + Math.sin(b.mt * 60) * 2; b.y = b.sy - u * 6;
+        if (u >= 1) {
+          b.mode = 'dive'; b.mt = 0; b.D = rand(1.3, 1.8) / Math.min(1.5, sf); b.sx = b.x; b.sy = b.y;
+          const tx = clamp(ship.x, 20, W - 20);
+          b.path = [[b.x, b.y], [rand(0, W), rand(70, 110)], [tx + rand(-40, 40), rand(100, 130)], [tx, H + 40]];
+          sfx.dive(); tone(160, .4, 'square', .04, -80);
+        }
+        break;
+      case 'dive':
+        [b.x, b.y] = bez(b.path, u * u * (3 - 2 * u));
+        if (u >= 1) { b.mode = 'return'; b.mt = 0; b.D = 1.4; b.x = rand(40, W - 40); b.y = -30; b.sx = b.x; b.sy = b.y; b.tx = rand(40, W - 40); }
+        break;
+      case 'return':
+        b.x = b.sx + (b.tx - b.sx) * ease(u); b.y = -30 + 82 * ease(u);
+        if (u >= 1) { b.mode = 'hold'; b.D = rand(.3, .8); b.mt = 0; }
+        break;
+    }
   }
   function bossFire(){
     const b = boss, bx = b.x, by = b.y + b.look.h * 1.5 - 2;
@@ -1252,7 +1310,7 @@ function BugsGame(){
 
   const api = {
     title: 'SPACE BUGS',
-    how: '◀ ▶ fly &nbsp; A or B fire (hold for auto-fire)<br>3 lives, extra life every 15 bugs — play until they run out!<br>Waves, a BOSS BUG, then a bonus round: fewer shots = bigger bonus',
+    how: '◀ ▶ fly &nbsp; A or B fire (hold for auto-fire)<br>3 lives, +1 life every 15 bugs (3 extra max) — play until they run out!<br>Waves, a BOSS BUG, then a bonus round: fewer shots = bigger bonus',
     labels: ['FIRE', 'FIRE'],
     clearText: 'NICE FLYING!',
     status: () => (phase === 'boss' || phase === 'won' ? 'BOSS' : bonus ? 'BONUS ' + bonus.hits + '/' + bonus.total
@@ -1334,12 +1392,14 @@ function BugsGame(){
 
       if (boss) {
         const b = boss; b.t += dt; b.f += dt * 5; b.flash = Math.max(0, b.flash - dt);
-        if (b.y < 52) b.y += 35 * dt;
-        else if (!b.laser) { b.x = 128 + Math.sin(b.t * .7) * 80; b.y = 52 + Math.sin(b.t * 1.3) * 5; }
-        if (b.y >= 52 && bannerT <= 0 && canAct) {
+        if (!b.laser) moveBoss(b, dt);
+        const settled = b.mode === 'roam' || b.mode === 'hold';
+        if (b.mode !== 'enter' && bannerT <= 0 && canAct) {
           if (b.laser) { b.laser.t += dt; if (b.laser.t > 1.7) b.laser = null; }
-          b.atkT -= dt; if (b.atkT <= 0 && !b.laser) bossFire();
+          b.atkT -= dt; if (b.atkT <= 0 && !b.laser && settled) bossFire();
         }
+        // touching the boss (mostly during a dive) costs a life
+        if (canAct && Math.abs(b.x - ship.x) < b.look.w * 1.2 && Math.abs(b.y - SHIP_Y) < b.look.h * 1.2) hitShip();
         if (b.laser && b.laser.t > 1 && b.laser.t < 1.7 && Math.abs(ship.x - b.laser.x) < 5 && canAct) hitShip();
         const hw = b.look.w * 1.5, hh = b.look.h * 1.5;
         for (const s of shots) if (!s.hit && boss && Math.abs(s.x - b.x) < hw && Math.abs(s.y - b.y) < hh) { s.hit = true; bossHit(); }
